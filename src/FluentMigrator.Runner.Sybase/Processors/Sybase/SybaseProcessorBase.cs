@@ -4,16 +4,13 @@ using System.Data;
 using System.Data.Common;
 using System.IO;
 
+using FluentMigrator.Exceptions;
 using FluentMigrator.Expressions;
-using FluentMigrator.Runner.BatchParser;
-using FluentMigrator.Runner.BatchParser.Sources;
-using FluentMigrator.Runner.BatchParser.SpecialTokenSearchers;
 using FluentMigrator.Runner.Helpers;
 using FluentMigrator.Runner.Initialization;
 
 using JetBrains.Annotations;
 
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -23,11 +20,11 @@ namespace FluentMigrator.Runner.Processors.Sybase
     {
         [CanBeNull]
         private readonly IServiceProvider _serviceProvider;
-        private const string SCHEMA_EXISTS = "SELECT 1 WHERE EXISTS (SELECT * FROM sys.schemas WHERE name = '{0}') ";
+        private const string SCHEMA_EXISTS = "";
         private const string TABLE_EXISTS = "SELECT 1 WHERE EXISTS (SELECT * from sysobjects where name = '{1}' and type = 'U')";
-        private const string COLUMN_EXISTS = "SELECT 1 WHERE EXISTS (select * from syscolumns c inner join sysobjects o on o.id = c.id where o.name = '{1}' and c.name = '{2}')";
-        private const string CONSTRAINT_EXISTS = "";
-        private const string INDEX_EXISTS = "";
+        private const string COLUMN_EXISTS = "SELECT 1 WHERE EXISTS (select * from syscolumns c inner join sysobjects o on o.id = c.id where o.name = '{0}' and c.name = '{1}')";
+        private const string CONSTRAINT_EXISTS = "SELECT 1 WHERE EXISTS (SELECT * from sysconstraints c inner join sysobjects t on t.id = c.tableid inner join sysobjects tc on tc.id = c.constrid where t.name = '{0}' and tc.name = '{1}')";
+        private const string INDEX_EXISTS = "SELECT 1 WHERE EXISTS (SELECT * from sysindexes i inner join sysobjects o on o.id = i.id where o.name = '{0}' and i.name = '{1}')";
         private const string SEQUENCES_EXISTS = "";
         private const string DEFAULTVALUE_EXISTS = "";
 
@@ -60,7 +57,7 @@ namespace FluentMigrator.Runner.Processors.Sybase
 
         public override bool SchemaExists(string schemaName)
         {
-            return Exists(SCHEMA_EXISTS, SafeSchemaName(schemaName));
+            return true;
         }
 
         public override bool TableExists(string schemaName, string tableName)
@@ -79,39 +76,36 @@ namespace FluentMigrator.Runner.Processors.Sybase
 
         public override bool ColumnExists(string schemaName, string tableName, string columnName)
         {
-            return Exists(COLUMN_EXISTS, SafeSchemaName(schemaName),
-                FormatHelper.FormatSqlEscape(tableName), FormatHelper.FormatSqlEscape(columnName));
+            return Exists(COLUMN_EXISTS, FormatHelper.FormatSqlEscape(tableName), FormatHelper.FormatSqlEscape(columnName));
         }
 
         public override bool ConstraintExists(string schemaName, string tableName, string constraintName)
         {
-            return Exists(CONSTRAINT_EXISTS, SafeSchemaName(schemaName),
-                FormatHelper.FormatSqlEscape(tableName), FormatHelper.FormatSqlEscape(constraintName));
+            return Exists(CONSTRAINT_EXISTS,
+                FormatHelper.FormatSqlEscape(tableName),
+                FormatHelper.FormatSqlEscape(constraintName));
         }
 
         public override bool IndexExists(string schemaName, string tableName, string indexName)
         {
             return Exists(INDEX_EXISTS,
-                FormatHelper.FormatSqlEscape(indexName), SafeSchemaName(schemaName), FormatHelper.FormatSqlEscape(tableName));
+                FormatHelper.FormatSqlEscape(tableName),
+                FormatHelper.FormatSqlEscape(indexName));
         }
 
         public override bool SequenceExists(string schemaName, string sequenceName)
         {
-            return Exists(SEQUENCES_EXISTS, SafeSchemaName(schemaName),
-                FormatHelper.FormatSqlEscape(sequenceName));
+            return false;
         }
 
         public override bool DefaultValueExists(string schemaName, string tableName, string columnName, object defaultValue)
         {
-            string defaultValueAsString = $"%{FormatHelper.FormatSqlEscape(defaultValue.ToString())}%";
-            return Exists(DEFAULTVALUE_EXISTS, SafeSchemaName(schemaName),
-                FormatHelper.FormatSqlEscape(tableName),
-                FormatHelper.FormatSqlEscape(columnName), defaultValueAsString);
+            return false;
         }
 
         public override void Process(CreateSchemaExpression expression)
         {
-            throw new NotSupportedException();
+            throw new DatabaseOperationNotSupportedException();
         }
         
         public override void Execute(string template, params object[] args)
@@ -154,28 +148,7 @@ namespace FluentMigrator.Runner.Processors.Sybase
                 return;
 
             EnsureConnectionIsOpen();
-
-            if (ContainsGo(sql))
-            {
-                ExecuteBatchNonQuery(sql);
-
-            }
-            else
-            {
-                ExecuteNonQuery(Connection, Transaction, sql);
-            }
-        }
-
-        private bool ContainsGo(string sql)
-        {
-            //todo, check if possible for sybase to include go
-            return false;
-        }
-
-        private void EnsureConnectionIsOpen(IDbConnection connection)
-        {
-            if (connection.State != ConnectionState.Open)
-                connection.Open();
+            ExecuteNonQuery(Connection, Transaction, sql);
         }
 
         private void ExecuteNonQuery(IDbConnection connection, IDbTransaction transaction, string sql)
@@ -196,59 +169,6 @@ namespace FluentMigrator.Runner.Processors.Sybase
 
                         throw new Exception(message.ToString(), ex);
                     }
-                }
-            }
-        }
-
-        private void ExecuteBatchNonQuery(string sql)
-        {
-            var sqlBatch = string.Empty;
-
-            try
-            {
-                var parser = _serviceProvider?.GetService<SybaseBatchParser>() ?? new SybaseBatchParser();
-                parser.SqlText += (sender, args) => { sqlBatch = args.SqlText.Trim(); };
-                parser.SpecialToken += (sender, args) =>
-                {
-                    if (string.IsNullOrEmpty(sqlBatch))
-                        return;
-
-                    if (args.Opaque is GoSearcher.GoSearcherParameters goParams)
-                    {
-                        using (var command = CreateCommand(sqlBatch))
-                        {
-                            for (var i = 0; i != goParams.Count; ++i)
-                            {
-                                command.ExecuteNonQuery();
-                            }
-                        }
-                    }
-
-                    sqlBatch = null;
-                };
-
-                using (var source = new TextReaderSource(new StringReader(sql), true))
-                {
-                    parser.Process(source, stripComments: Options.StripComments);
-                }
-
-                if (!string.IsNullOrEmpty(sqlBatch))
-                {
-                    using (var command = CreateCommand(sqlBatch))
-                    {
-                        command.ExecuteNonQuery();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                using (var message = new StringWriter())
-                {
-                    message.WriteLine("An error occured executing the following sql:");
-                    message.WriteLine(string.IsNullOrEmpty(sqlBatch) ? sql : sqlBatch);
-                    message.WriteLine("The error was {0}", ex.Message);
-
-                    throw new Exception(message.ToString(), ex);
                 }
             }
         }
