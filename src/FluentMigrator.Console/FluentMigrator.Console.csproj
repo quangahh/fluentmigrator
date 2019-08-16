@@ -16,9 +16,11 @@
     <None Include="..\..\FluentMigrator.snk" Link="FluentMigrator.snk" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\FluentMigrator.Runner.Sybase\FluentMigrator.Runner.Sybase.csproj" />
     <ProjectReference Include="..\FluentMigrator.Runner\FluentMigrator.Runner.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="AdoNetCore.AseClient" Version="0.14.0" />
     <PackageReference Include="Npgsql" Version="3.2.7" />
     <PackageReference Include="FirebirdSql.Data.FirebirdClient" Version="5.12.1" />
     <PackageReference Include="FSharp.Core" Version="4.6.2" />

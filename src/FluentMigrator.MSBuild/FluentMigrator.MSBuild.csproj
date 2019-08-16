@@ -11,6 +11,7 @@
     </None>
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\FluentMigrator.Runner.Sybase\FluentMigrator.Runner.Sybase.csproj" />
     <ProjectReference Include="..\FluentMigrator.Runner\FluentMigrator.Runner.csproj" />
   </ItemGroup>
   <ItemGroup Condition=" '$(TargetFramework)' == 'net461' ">
