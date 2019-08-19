@@ -31,11 +31,11 @@ namespace FluentMigrator.Runner.Generators.Sybase
                     return "NEWID()";
                 case SystemMethods.CurrentDateTimeOffset:
                 case SystemMethods.CurrentDateTime:
-                    return "CURRENT TIMESTAMP";
+                    return "GETDATE()";
                 case SystemMethods.CurrentUTCDateTime:
-                    return "CURRENT UTC TIMESTAMP";
+                    return "GETUTCDATE()";
                 case SystemMethods.CurrentUser:
-                    return "CURRENT USER";
+                    return "USER";
             }
 
             return base.FormatSystemMethods(value);

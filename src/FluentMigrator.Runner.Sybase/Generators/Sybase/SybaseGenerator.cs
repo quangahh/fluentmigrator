@@ -21,6 +21,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
+using FluentMigrator.Exceptions;
 using FluentMigrator.Expressions;
 using FluentMigrator.Model;
 using FluentMigrator.Runner.Generators.Generic;
@@ -75,7 +76,7 @@ namespace FluentMigrator.Runner.Generators.Sybase
 
         public override string DropColumn => "ALTER TABLE {0} DROP {1}";
 
-        public override string AlterColumn => "ALTER TABLE {0} ALTER {1}";
+        public override string AlterColumn => "ALTER TABLE {0} MODIFY {1}";
 
         public override string RenameColumn => "EXEC sp_rename '{0}.{1}', {2}";
 
@@ -122,24 +123,26 @@ namespace FluentMigrator.Runner.Generators.Sybase
 
         public override string Generate(AlterColumnExpression expression)
         {
-            var alterTableStatement = base.Generate(expression);
-            var descriptionStatement = DescriptionGenerator.GenerateDescriptionStatement(expression);
-
-            if (string.IsNullOrEmpty(descriptionStatement))
-                return alterTableStatement;
-
-            return ComposeStatements(alterTableStatement, new[] { descriptionStatement });
+            var tableName = Quoter.QuoteTableName(expression.TableName).Replace("[dbo].", string.Empty);
+            return string.Format(AlterColumn, tableName, Column.Generate(expression.Column));
         }
 
         public override string Generate(RenameColumnExpression expression)
         {
             return string.Format(RenameColumn,
-                string.Format("{0}{1}",
-                    string.IsNullOrEmpty(expression.SchemaName) ? string.Empty : expression.SchemaName + ".",
-                    expression.TableName),
+                expression.TableName,
                 expression.OldName,
                 Quoter.QuoteColumnName(expression.NewName)
             );
+        }
+
+        public override string Generate(DeleteColumnExpression expression)
+        {
+            if (expression.ColumnNames.Count != 1)
+            {
+                throw new DatabaseOperationNotSupportedException();
+            }
+            return string.Format(DropColumn, Quoter.QuoteTableName(expression.TableName, expression.SchemaName), Quoter.QuoteColumnName(expression.ColumnNames.ElementAt(0)));
         }
 
         public override string Generate(CreateConstraintExpression expression)
@@ -161,22 +164,13 @@ namespace FluentMigrator.Runner.Generators.Sybase
 
         public override string Generate(AlterDefaultConstraintExpression expression)
         {
-            // before we alter a default constraint on a column, we have to drop any default value constraints in Sybase
-            var builder = new StringBuilder();
-            var deleteDefault = Generate(new DeleteDefaultConstraintExpression
-            {
-                ColumnName = expression.ColumnName,
-                SchemaName = expression.SchemaName,
-                TableName = expression.TableName
-            }) + ";";
-            builder.AppendLine(deleteDefault);
+            const string AlterConstraint = "ALTER TABLE {0} REPLACE {1} DEFAULT {2}";
 
-            builder.Append(string.Format("-- create alter table command to create new default constraint as string and run it" + Environment.NewLine + "ALTER TABLE {0} ALTER {1} DEFAULT {2};",
+            return string.Format(AlterConstraint,
                 Quoter.QuoteTableName(expression.TableName, expression.SchemaName),
                 Quoter.QuoteColumnName(expression.ColumnName),
-                SybaseColumn.FormatDefaultValue(expression.DefaultValue, Quoter)));
+                SybaseColumn.FormatDefaultValue(expression.DefaultValue, Quoter));
 
-            return builder.ToString();
         }
 
         public override string Generate(CreateForeignKeyExpression expression)
